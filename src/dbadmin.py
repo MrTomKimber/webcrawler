@@ -42,8 +42,12 @@ class URLRequestResult(Base):
     url : Mapped[str]
     baseurl: Mapped[str]
     context : Mapped[str]
-    fetchts = Mapped[datetime.datetime]
-    status = Mapped[str]
+    fetchts : Mapped[datetime.datetime]
+    status : Mapped[str]
+    content_type : Mapped[str]
+    content_length : Mapped[int]
+    content_bytes : Mapped[bytes]
+    content_encoding : Mapped[str]
 
 class URLLinkConnections(Base):
     """Class for capturing link structure"""

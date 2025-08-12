@@ -77,6 +77,34 @@ class URLRequest(object):
 
 class URLRequestResult(object):
     def __init__(self, url_request: URLRequest):
+        self.request = url_request
         self._result = requests.get(url_request.url, headers=url_request.context.headers)
         self.fetchts = datetime.now()
         self.status = self._result.status_code
+        self.content_length=None
+        self.content_type=None
+        self.content=self._result.content
+        for k,v in self._result.headers.items():
+            if k.lower()=='content-type':
+                self.content_type = self._result.headers[k]
+            elif k.lower()=='content-length':
+                self.content_length = self._result.headers[k]
+
+        self.content = self._result.content
+        self.encoding = self._result.encoding
+                
+            
+
+    def to_dataclass(self):
+        return dbadmin.URLRequestResult(
+            requestid = self.request.id,
+            url = self.request.url, 
+            baseurl = self.request.baseurl(self.request.url), 
+            context = self.request.context.name, 
+            fetchts = self.fetchts,
+            status = self.status, 
+            content_type = self.content_type, 
+            content_length = self.content_length, 
+            content_bytes = self.content, 
+            content_encoding = self.encoding
+        )
