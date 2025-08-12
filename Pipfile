@@ -10,6 +10,7 @@ jupyter = "*"
 notebook = "*"
 beautifulsoup4 = "*"
 jsonschema = "*"
+sqlalchemy = "*"
 
 [dev-packages]
 

@@ -1,5 +1,6 @@
 # General
 ide/
+db/store.sqlite
 Pipfile.lock
 
 # Byte-compiled / optimized / DLL files

@@ -16,6 +16,13 @@
                     "items": {
                         "$ref": "#/$defs/context"
                     }
+                }, 
+                "server" : {
+                    "type" : "object",
+                    "properties" : {
+                        "dblocation" : { "type" : "string"},
+                        "maxthreads" : { "type" : "integer"}
+                    }
                 }
             }, 
             "additionalProperties":false
@@ -42,6 +49,10 @@
                     "type": "string",
                     "description": "A description of the refresh-frequency after which a page will be reconsidered for refresh. Set to null for no auto-refresh logic.",
                     "pattern": "^([\\d]+?\\.?[\\d]*)([mhDWMY])$"
+                }, 
+                "timeout" : {
+                    "type" : "integer", 
+                    "description" : "(Optional) number of seconds to await a response before timing out."
                 }
             },
             "additionalProperties": false,
