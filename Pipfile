@@ -9,6 +9,7 @@ pandas = "*"
 jupyter = "*"
 notebook = "*"
 beautifulsoup4 = "*"
+jsonschema = "*"
 
 [dev-packages]
 

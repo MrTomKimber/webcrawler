@@ -1,0 +1,11 @@
+{
+    "$schema": "../src/context_schema.json",
+    "contexts": [
+        {
+            "name": "www.iso20022.org",
+            "headers": {},
+            "base": "https://www.iso20022.org/",
+            "refresh": "90D"
+        }
+    ]
+}

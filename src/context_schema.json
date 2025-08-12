@@ -1,0 +1,55 @@
+{
+    "$ref": "#/$defs/contextconfig",
+    "$defs": {
+        "contextconfig": {
+            "title": "Webcrawler Site Context",
+            "description": "Contextual information for crawling a website",
+            "type": "object",
+            "properties": {
+                "$schema": {
+                    "description": "A pointer to (this) schema file used to validate/govern the format of the context file.",
+                    "type": "string"
+                },
+                "contexts": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                        "$ref": "#/$defs/context"
+                    }
+                }
+            }, 
+            "additionalProperties":false
+        },
+        "context": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The unique name of the context"
+                },
+                "headers": {
+                    "oneOf": [
+                        {"type": "null"},
+                        {"type": "object"}],
+                    "description": "Include any key-value pairs to be included in the request header submission when requesting content in this context."
+
+                },
+                "base": {
+                    "type": "string",
+                    "description": "The base-url that defines the scope of the site or repository. Used to map new links to appropriate contexts and to define site-boundaries."
+                },
+                "refresh": {
+                    "type": "string",
+                    "description": "A description of the refresh-frequency after which a page will be reconsidered for refresh. Set to null for no auto-refresh logic.",
+                    "pattern": "^([\\d]+?\\.?[\\d]*)([mhDWMY])$"
+                }
+            },
+            "additionalProperties": false,
+            "required": [
+                "headers",
+                "base",
+                "refresh"
+            ]
+        }
+    }
+}
