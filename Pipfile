@@ -11,6 +11,7 @@ notebook = "*"
 beautifulsoup4 = "*"
 jsonschema = "*"
 sqlalchemy = "*"
+importlib-resources = "*"
 
 [dev-packages]
 

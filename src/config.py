@@ -5,12 +5,12 @@ import json
 import jsonschema
 from jsonschema.exceptions import ValidationError as JSONValidationError 
 
-import importlib
+import importlib_resources
 import src.fetch as fetch
-
+from datetime import timedelta, datetime
 
 # Ensure that the context_schema.json file is located in the same src directory as this module
-JSONCONTEXTSCHEMA=importlib.resources.read_text(__name__, "context_schema.json",encoding='utf-8')
+JSONCONTEXTSCHEMA=importlib_resources.read_text(__name__, "context_schema.json",encoding='utf-8')
 
 
 
@@ -44,7 +44,11 @@ class FrequencyString(object):
     
     @staticmethod
     def evaluate(freq_string):
-        t,u = FrequencyString._valid_regex.match(freq_string).groups()
+        match = FrequencyString._valid_regex.match(freq_string)
+        if not match:
+            raise ValueError(f"Invalid frequency string: {freq_string}")
+        else:
+            t,u = match.groups()
         return timedelta(**{FrequencyString._tcodes[u][1]:FrequencyString._strtonum(t)*FrequencyString._tcodes[u][2]})
     
     @staticmethod

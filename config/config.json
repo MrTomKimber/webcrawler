@@ -2,9 +2,9 @@
     "$schema": "../src/context_schema.json",
     "contexts": [
         {
-            "name": "www.iso20022.org",
-            "headers": {"user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0"},
-            "base": "https://www.iso20022.org/",
+            "name": "BBC News",
+            "headers": null,
+            "base": "https://www.bbc.co.uk/news",
             "refresh": "90D", 
             "timeout" : 5
         }
