@@ -49,7 +49,7 @@ class URLRequestResult(Base):
     content_bytes : Mapped[bytes]
     content_encoding : Mapped[str]
 
-class URLLinkConnections(Base):
+class URLLinkConnection(Base):
     """Class for capturing link structure"""
     __tablename__ = "url_link_connection"
     linkid : Mapped[str] = mapped_column(primary_key=True)

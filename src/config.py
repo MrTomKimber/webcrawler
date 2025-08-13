@@ -4,14 +4,29 @@ import re
 import json
 import jsonschema
 from jsonschema.exceptions import ValidationError as JSONValidationError 
-
-import importlib_resources
-import src.fetch as fetch
+try:
+    import importlib.resources as impres
+except ImportError:
+    import importlib_resources as impres
+from urllib.parse import urlsplit, urlunsplit
 from datetime import timedelta, datetime
 
 # Ensure that the context_schema.json file is located in the same src directory as this module
-JSONCONTEXTSCHEMA=importlib_resources.read_text(__name__, "context_schema.json",encoding='utf-8')
+JSONCONTEXTSCHEMA=impres.read_text(__name__, "context_schema.json",encoding='utf-8')
 
+
+
+def baseurl(url):
+    split_url = urlsplit(url)
+    base_url = urlunsplit(list([split_url.scheme, split_url.netloc])+(['' for n in range(0,3)]))
+    return base_url
+
+def niceurl(url):
+    split_url = urlsplit(url)
+    nice_url = urlunsplit(split_url)
+    if nice_url[-1]=="/":
+        nice_url=nice_url[:-1]
+    return nice_url
 
 
 
@@ -59,6 +74,7 @@ class FrequencyString(object):
             return float(s)
 
 
+
 class Configuration(object):
     
     def __init__(self, json_filename):
@@ -78,7 +94,7 @@ class Configuration(object):
         found_bases=set()
         reverse_dict = dict()
         for name,v in self.contexts.items():
-            base = fetch.URLRequest.baseurl(v['base'])
+            base = niceurl(v['base'])
             if base in found_bases:
                 reverse_dict[base].append(name)
             else:
@@ -101,20 +117,24 @@ class Configuration(object):
     def get_context(self, context_name):
         if context_name in self.contexts.keys():
             c_dict = {**{"name" : context_name}, **self.contexts[context_name]}
-            return fetch.RequestContext(**c_dict)
+            return RequestContext(**c_dict)
         else:
             options = ",".join(self.contexts.keys())
             raise KeyError (f"No {context_name} found in config {self.source_filename}. Try one of {{{options}}}")
     
     def search_matching_contexts(self, url):
-        base = fetch.URLRequest.baseurl(url)
-        if base in self.reverse_context_base_search_d.keys():
-            return self.reverse_context_base_search_d[base]
-        else:
-            return []
+        matching_contexts=list()
+        best_context_keys=set()
+        for k in self.reverse_context_base_search_d.keys():
+            if k in url:
+                best_context_keys.add(k)
+        # Extract the longest best_context_key
+        context_key = sorted(list(best_context_keys), key=lambda x : len(x), reverse=True)[0]
+        return self.reverse_context_base_search_d[context_key]
 
     def resolve_context_from_url(self, url):
         contexts = self.search_matching_contexts(url)
+        print(contexts)
         if len(contexts)==1:
             return contexts[0]
         else:
@@ -122,4 +142,21 @@ class Configuration(object):
             raise ValueError(f"Multiple contexts {{{contexts_str}}} returned for url {url} - review config")
 
 
+
+class RequestContext(object):
+    """ Class describing the set of headers and any other
+    content to be associated with a URL request 
+    normally, these would include authentication and any
+    other contextual information that would normally be
+    scoped by the domain being accessed"""
+    def __init__(self, name, base, headers, refresh, timeout=None):
+        self.name = name
+        self.base = base
+        self.headers = headers
+        self.refresh = refresh
+        self.timeout = timeout
+    
+    @staticmethod
+    def from_context_string(config : Configuration, context: str):
+        return config.get_context(context)
 

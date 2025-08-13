@@ -1,5 +1,5 @@
 import requests 
-from urllib.parse import urlsplit, urlunsplit
+
 import re
 import datetime
 import uuid
@@ -7,27 +7,7 @@ from datetime import timedelta, datetime
 from functools import partial
 
 import src.dbadmin as dbadmin
-from src.config import Configuration
-
-
-class RequestContext(object):
-    """ Class describing the set of headers and any other
-    content to be associated with a URL request 
-    normally, these would include authentication and any
-    other contextual information that would normally be
-    scoped by the domain being accessed"""
-    def __init__(self, name, base, headers, refresh, timeout=None):
-        self.name = name
-        self.base = base
-        self.headers = headers
-        self.refresh = refresh
-        self.timeout = timeout
-    
-    @staticmethod
-    def from_context_string(config : Configuration, context: str):
-        return config.get_context(context)
-
-
+from src.config import Configuration, baseurl, niceurl
 
 class URLRequest(object):
     """Class used for wrapping a url http request
@@ -48,7 +28,6 @@ class URLRequest(object):
         """Given a Configuration object reflecting the
         active configuration and a url, return a URLRequest
         object having resolved the context."""
-        baseurl = URLRequest.baseurl(url)
         context = config.resolve_context_from_url(url)
         return URLRequest(config, url, context)
 
@@ -62,19 +41,13 @@ class URLRequest(object):
         return dbadmin.URLRequestQueue(
             requestid = self.id,
             url = self.url,
-            baseurl = URLRequest.baseurl(self.url),
+            baseurl = baseurl(self.url),
+            #baseurl = self.context.base_url,
             context = self.context.name,
             submittedts = datetime.now(),
             complete = self.complete
         )
     
-    @staticmethod
-    def baseurl(url):
-        split_url = urlsplit(url)
-        base_url = urlunsplit(list([split_url.scheme, split_url.netloc])+(['' for n in range(0,3)]))
-        return base_url
-
-
 class URLRequestResult(object):
     def __init__(self, url_request: URLRequest):
         self.request = url_request
@@ -99,7 +72,7 @@ class URLRequestResult(object):
         return dbadmin.URLRequestResult(
             requestid = self.request.id,
             url = self.request.url, 
-            baseurl = self.request.baseurl(self.request.url), 
+            baseurl = baseurl(self.request.url), 
             context = self.request.context.name, 
             fetchts = self.fetchts,
             status = self.status, 
