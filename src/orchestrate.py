@@ -25,6 +25,7 @@ with Session(DB.engine) as session:
     session.commit()
 
 
+
 def process_request(config, session, request_data):
     """Reads dataclass data from a queue, converts it to the appropriate
     object (must have a from_dataclass initiation method) and then runs
@@ -33,9 +34,9 @@ def process_request(config, session, request_data):
     is returned to the status_queue so those mutations can be written 
     back to the database."""
 
-    working_object = fetch.URLRequest.from_dataclass(config, request_data.URLRequestQueue)
+    working_object = fetch.URLRequest.from_dataclass(config, request_data)
     result = working_object.get()
-    request_data.URLRequestQueue.complete=True
+    request_data.complete=True
     session.add(request_data)
     dataclass_result = result.to_dataclass()
     session.add(dataclass_result)
@@ -43,19 +44,21 @@ def process_request(config, session, request_data):
 
 
 def TriggerFetchProcess(config, DB, batchsize=50, threadpoolsize=5):
-    url_request_queue=queue.Queue(maxsize=maxsize)
-
     # Pull incomplete requests in priority order
     with Session(DB.engine) as session:
         #pending_requests_data = session.execute(sqltext("select * from url_request_queue where complete != true order by submittedts"))
-        pending_requests_objects = session.execute(select(dbadmin.URLRequestQueue).where(dbadmin.URLRequestQueue.complete!=True).order_by(dbadmin.URLRequestQueue.submittedts)).fetchall()
+        pending_requests_objects = [o[0] for o in session.execute(select(dbadmin.URLRequestQueue).where(dbadmin.URLRequestQueue.complete!=True).order_by(dbadmin.URLRequestQueue.submittedts)).fetchall()]
         batch_len = min(batchsize, len(pending_requests_objects))
         i=-1
-        while i < batch_len:
+        print(batch_len)
+        while i < (batch_len-1):
             threadpool=list()    
-            for t in range(min(threadpoolsize, batch_len-i)):
-                threadpool.append(threading.Thread(target=process_request, args=(config, session, pending_requests_objects[i])))
+            print(i, batch_len, threadpoolsize)
+            for t in range(0, min(threadpoolsize, (batch_len-i)-1)):
                 i=i+1
+                print(i)
+                threadpool.append(threading.Thread(target=process_request, args=(config, session, pending_requests_objects[i])))
+                
             for t in threadpool:
                 t.start()
             for t in threadpool:
@@ -63,8 +66,7 @@ def TriggerFetchProcess(config, DB, batchsize=50, threadpoolsize=5):
             del threadpool
 
         session.commit()
-    return "Processed {i+1} records."
-
+    return f"Processed {i+1} records."
 
 
 
