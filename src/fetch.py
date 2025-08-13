@@ -47,11 +47,17 @@ class URLRequest(object):
             submittedts = datetime.now(),
             complete = self.complete
         )
+    @staticmethod
+    def from_dataclass(config, data : dbadmin.URLRequestQueue):
+        item = URLRequest(config, data.url, data.context) 
+        item.id = data.requestid
+        item.complete = data.complete
+        return item
     
 class URLRequestResult(object):
     def __init__(self, url_request: URLRequest):
         self.request = url_request
-        self._result = requests.get(url_request.url, headers=url_request.context.headers)
+        self._result = requests.get(url_request.url, headers=url_request.context.headers, timeout=3)
         self.fetchts = datetime.now()
         self.status = self._result.status_code
         self.content_length=None

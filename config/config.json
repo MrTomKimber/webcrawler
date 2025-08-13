@@ -7,6 +7,14 @@
             "baseurl": "https://www.bbc.co.uk/news",
             "refresh": "90D", 
             "timeout" : 5
+        },
+        
+        {
+            "name": "NPR",
+            "headers": null,
+            "baseurl": "https://www.npr.org/",
+            "refresh": "90D", 
+            "timeout" : 5
         }
     ], 
     "server" : {
