@@ -41,7 +41,7 @@
                     "description": "Include any key-value pairs to be included in the request header submission when requesting content in this context."
 
                 },
-                "base": {
+                "baseurl": {
                     "type": "string",
                     "description": "The base-url that defines the scope of the site or repository. Used to map new links to appropriate contexts and to define site-boundaries."
                 },
@@ -58,7 +58,7 @@
             "additionalProperties": false,
             "required": [
                 "headers",
-                "base",
+                "baseurl",
                 "refresh"
             ]
         }

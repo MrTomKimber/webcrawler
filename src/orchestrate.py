@@ -11,7 +11,7 @@ config = Configuration("../config/config.json")
 DB = dbadmin.DataStore(config)
 
 # Create Request
-url_request = URLRequest.from_url(config, "https://www.bbc.co.uk/news")
+url_request = URLRequest.from_url(config, "https://www.bbc.co.uk/news/articles/c23p028p200o")
 
 # Save request to database
 with Session(DB.engine) as session:

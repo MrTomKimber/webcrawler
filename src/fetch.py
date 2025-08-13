@@ -41,8 +41,8 @@ class URLRequest(object):
         return dbadmin.URLRequestQueue(
             requestid = self.id,
             url = self.url,
-            baseurl = baseurl(self.url),
-            #baseurl = self.context.base_url,
+            #baseurl = baseurl(self.url),
+            baseurl = self.context.baseurl,
             context = self.context.name,
             submittedts = datetime.now(),
             complete = self.complete
@@ -60,8 +60,7 @@ class URLRequestResult(object):
         for k,v in self._result.headers.items():
             if k.lower()=='content-type':
                 self.content_type = self._result.headers[k]
-            elif k.lower()=='content-length':
-                self.content_length = self._result.headers[k]
+        self.content_length = len(self._result.content)
 
         self.content = self._result.content
         self.encoding = self._result.encoding
@@ -72,7 +71,7 @@ class URLRequestResult(object):
         return dbadmin.URLRequestResult(
             requestid = self.request.id,
             url = self.request.url, 
-            baseurl = baseurl(self.request.url), 
+            baseurl = self.request.context.baseurl, 
             context = self.request.context.name, 
             fetchts = self.fetchts,
             status = self.status, 

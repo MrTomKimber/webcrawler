@@ -94,7 +94,7 @@ class Configuration(object):
         found_bases=set()
         reverse_dict = dict()
         for name,v in self.contexts.items():
-            base = niceurl(v['base'])
+            base = niceurl(v['baseurl'])
             if base in found_bases:
                 reverse_dict[base].append(name)
             else:
@@ -149,9 +149,9 @@ class RequestContext(object):
     normally, these would include authentication and any
     other contextual information that would normally be
     scoped by the domain being accessed"""
-    def __init__(self, name, base, headers, refresh, timeout=None):
+    def __init__(self, name, baseurl, headers, refresh, timeout=None):
         self.name = name
-        self.base = base
+        self.baseurl = baseurl
         self.headers = headers
         self.refresh = refresh
         self.timeout = timeout
