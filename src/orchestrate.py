@@ -53,7 +53,7 @@ def TriggerFetchProcess(config, DB, batchsize=50, threadpoolsize=5):
         i=-1
         while i < batch_len:
             threadpool=list()    
-            for t in range(threadpoolsize):
+            for t in range(min(threadpoolsize, batch_len-i)):
                 threadpool.append(threading.Thread(target=process_request, args=(config, session, pending_requests_objects[i])))
                 i=i+1
             for t in threadpool:
@@ -63,7 +63,7 @@ def TriggerFetchProcess(config, DB, batchsize=50, threadpoolsize=5):
             del threadpool
 
         session.commit()
-    return "Processed {i} records."
+    return "Processed {i+1} records."
 
 
 
