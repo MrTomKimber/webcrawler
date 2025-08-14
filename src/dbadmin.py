@@ -34,14 +34,14 @@ class URLRequestQueue(Base):
     context : Mapped[str]
     submittedts: Mapped[datetime.datetime]
     complete: Mapped[bool]
+    gotlinks: Mapped[bool]
 
-class URLRequestResult(Base):
+class URLRequestResultData(Base):
     """Class for capturing the response from a URL request."""
     __tablename__ = "url_request_result"
     requestid : Mapped[str] = mapped_column(primary_key=True)
     url : Mapped[str]
     baseurl: Mapped[str]
-    context : Mapped[str]
     fetchts : Mapped[datetime.datetime]
     status : Mapped[str]
     content_type : Mapped[str]
@@ -49,13 +49,13 @@ class URLRequestResult(Base):
     content_bytes : Mapped[bytes]
     content_encoding : Mapped[str]
 
-class URLLinkConnection(Base):
+class URLLinkConnectionData(Base):
     """Class for capturing link structure"""
     __tablename__ = "url_link_connection"
     linkid : Mapped[str] = mapped_column(primary_key=True)
+    requestid : Mapped[str]
     frombase: Mapped[str]
     fromurl: Mapped[str]
-    tobase: Mapped[str]
     tourl: Mapped[str]
     fetchts: Mapped[datetime.datetime]
     fetchcontext: Mapped[str]

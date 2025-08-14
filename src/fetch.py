@@ -5,6 +5,7 @@ import datetime
 import uuid
 from datetime import timedelta, datetime
 from functools import partial
+import bs4
 
 import src.dbadmin as dbadmin
 from src.config import Configuration, baseurl, niceurl
@@ -22,6 +23,7 @@ class URLRequest(object):
         self.requested = False
         self.fetchts = None
         self.status = None
+        self.gotlinks = False
 
     @staticmethod
     def from_url(config, url):
@@ -33,7 +35,27 @@ class URLRequest(object):
 
 
     def get(self):
-        result = URLRequestResult(self)
+        _result = requests.get(
+                    self.url, 
+                    headers=self.context.headers, 
+                    timeout=3)
+        fetchts=datetime.now()
+        content_type=None
+        for k,v in _result.headers.items():
+            if k.lower()=='content-type':
+                content_type = _result.headers[k]
+
+            result = URLRequestResult(
+                requestid =self.id,
+                url = self.url, 
+                baseurl = self.context.baseurl,
+                status = _result.status_code,
+                content = _result.content,
+                content_type = content_type, 
+                encoding = _result.encoding, 
+                fetchts = fetchts
+                )
+
         self.complete=True
         return result
 
@@ -45,40 +67,78 @@ class URLRequest(object):
             baseurl = self.context.baseurl,
             context = self.context.name,
             submittedts = datetime.now(),
-            complete = self.complete
+            complete = self.complete, 
+            gotlinks = self.gotlinks
         )
+
     @staticmethod
     def from_dataclass(config, data : dbadmin.URLRequestQueue):
         item = URLRequest(config, data.url, data.context) 
         item.id = data.requestid
         item.complete = data.complete
+        item.gotlinks = data.gotlinks
         return item
     
 class URLRequestResult(object):
-    def __init__(self, url_request: URLRequest):
-        self.request = url_request
-        self._result = requests.get(url_request.url, headers=url_request.context.headers, timeout=3)
-        self.fetchts = datetime.now()
-        self.status = self._result.status_code
-        self.content_length=None
-        self.content_type=None
-        self.content=self._result.content
-        for k,v in self._result.headers.items():
-            if k.lower()=='content-type':
-                self.content_type = self._result.headers[k]
-        self.content_length = len(self._result.content)
+    def __init__(self, 
+                requestid : str,
+                url : str, 
+                baseurl : str,
+                status : str,
+                content : str,
+                content_type : str, 
+                encoding :str, 
+                fetchts 
+                ):
+        self.requestid = requestid
+        self.url = url
+        self.baseurl = baseurl
+        self.status = status
+        self.content=content
+        self.content_type=content_type
+        self.content_length=len(content)
+        self.encoding = encoding
+        self.fetchts = fetchts
 
-        self.content = self._result.content
-        self.encoding = self._result.encoding
-                
-            
+    def classify_content(self):
+        # Extendable function to identify and classify known
+        # content-classes. 
+        if self.content_type is not None:
+            content_classes = {"html", "other"}
+            ctype, *others = self.content_type.split(";")
+            if ctype.lower() == "text/html":
+                return "html"
+            else:
+                return "other"
+        return "None"
+
+    def collate_encoding_clues(self):
+        """Encoding clues can be spread across multiple locations
+        this function aims to collate all possible encoding cues
+        into a single place"""
+        encoding_clues = dict()
+        encoding_clues['header']=self.encoding
+        if self.content_type is not None:
+            ctype, *others = self.content_type.split(";")
+            for other in others:
+                parm, value = other.lower().split("=")
+                if parm.lower()=="charset":
+                    encoding_clues['mimetype']=value.lower()
+        
+        if self.classify_content()=='html':
+            meta_charset_strainer = bs4.SoupStrainer("meta", {'charset':True})
+            # Sift the first 500 bytes for any meta-tags that might be useful
+            nodes = bs4.BeautifulSoup(self.content[0:500].decode("utf-8"), features="html.parser", parse_only=meta_charset_strainer)
+            if len(nodes)>0:
+                encoding_clues['meta-charset']=list(nodes.children)[0].attrs['charset'].lower()
+        return encoding_clues
+
 
     def to_dataclass(self):
-        return dbadmin.URLRequestResult(
-            requestid = self.request.id,
-            url = self.request.url, 
-            baseurl = self.request.context.baseurl, 
-            context = self.request.context.name, 
+        return dbadmin.URLRequestResultData(
+            requestid = self.requestid,
+            url = self.url, 
+            baseurl = self.baseurl, 
             fetchts = self.fetchts,
             status = self.status, 
             content_type = self.content_type, 
@@ -86,3 +146,16 @@ class URLRequestResult(object):
             content_bytes = self.content, 
             content_encoding = self.encoding
         )
+    @staticmethod
+    def from_dataclass(data : dbadmin.URLRequestResultData):
+        return URLRequestResult(
+            requestid=data.requestid,
+            url = data.url, 
+            baseurl = data.baseurl,
+            status = data.status,
+            content = data.content_bytes,
+            content_type = data.content_type, 
+            encoding = data.content_encoding, 
+            fetchts = data.fetchts
+            )
+

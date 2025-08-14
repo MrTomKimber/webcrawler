@@ -119,8 +119,10 @@ class Configuration(object):
             c_dict = {**{"name" : context_name}, **self.contexts[context_name]}
             return RequestContext(**c_dict)
         else:
-            options = ",".join(self.contexts.keys())
-            raise KeyError (f"No {context_name} found in config {self.source_filename}. Try one of {{{options}}}")
+            pass
+            #options = ",".join(self.contexts.keys())
+
+            #raise KeyError (f"No {context_name} found in config {self.source_filename}. Try one of {{{options}}}")
     
     def search_matching_contexts(self, url):
         matching_contexts=list()
@@ -129,17 +131,19 @@ class Configuration(object):
             if k in url:
                 best_context_keys.add(k)
         # Extract the longest best_context_key
-        context_key = sorted(list(best_context_keys), key=lambda x : len(x), reverse=True)[0]
-        return self.reverse_context_base_search_d[context_key]
+        if len(best_context_keys)>0:
+            context_key = sorted(list(best_context_keys), key=lambda x : len(x), reverse=True)[0]
+            return self.reverse_context_base_search_d[context_key]
+
 
     def resolve_context_from_url(self, url):
         contexts = self.search_matching_contexts(url)
-        print(contexts)
-        if len(contexts)==1:
-            return contexts[0]
-        else:
-            contexts_str=",".join(contexts)
-            raise ValueError(f"Multiple contexts {{{contexts_str}}} returned for url {url} - review config")
+        if contexts is not None:
+            if len(contexts)==1:
+                return contexts[0]
+            else:
+                contexts_str=",".join(contexts)
+                raise ValueError(f"Multiple contexts {{{contexts_str}}} returned for url {url} - review config")
 
 
 
