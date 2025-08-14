@@ -8,6 +8,7 @@ from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 import datetime
 from sqlalchemy import create_engine
+import pandas as pd
 
 class DataStore(object):
     def __init__(self, configuration):
@@ -21,6 +22,19 @@ class DataStore(object):
             new_db_start = False
         self.engine = create_engine(f"sqlite:///{self.dblocation}", echo=True)
         Base.metadata.create_all(self.engine)
+
+    def sql_to_dataframe(self, query):
+        with sqlite3.connect(self.dblocation) as connection:
+            cursor = connection.cursor()
+            results = cursor.execute(query)
+            if results.description is not None:
+                columns = [c[0] for c in results.description]
+                df = pd.DataFrame(results, columns=columns)
+                cursor.close()
+                return df
+            else:
+                return None
+
 
 class Base(DeclarativeBase):
     pass

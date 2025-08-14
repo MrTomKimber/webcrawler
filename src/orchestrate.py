@@ -11,7 +11,15 @@ import threading
 import queue
 
 
-
+def submit_url_to_queue(config, datastore, url):
+    url_request = URLRequest.from_url(config, url)
+    if url_request.context is not None:
+        with Session(datastore.engine) as session:
+            obj = url_request.to_dataclass()
+            session.add(obj)
+            session.commit()
+    else:
+        print(f"No matching Context found for {url}")
 
 def process_request_within_session(config, session, request_data):
     """Reads dataclass data from a queue, converts it to the appropriate

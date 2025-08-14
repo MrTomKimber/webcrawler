@@ -12,7 +12,12 @@ from urllib.parse import urlsplit, urlunsplit
 from datetime import timedelta, datetime
 
 # Ensure that the context_schema.json file is located in the same src directory as this module
-JSONCONTEXTSCHEMA=impres.read_text(__name__, "context_schema.json",encoding='utf-8')
+print(__name__)
+try:
+    JSONCONTEXTSCHEMA=impres.read_text(__name__, "context_schema.json",encoding='utf-8')
+except TypeError:
+    JSONCONTEXTSCHEMA=impres.read_text(__name__.split(".")[0], "context_schema.json",encoding='utf-8')
+
 
 
 
