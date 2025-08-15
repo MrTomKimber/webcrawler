@@ -29,6 +29,7 @@ class URLRequest(object):
         self.status = None
         self.gotlinks = False
         self.closed = False
+        self.parent_requestid=None
         if depth is None:
             depth=0
         self.linkdepth = depth
@@ -81,7 +82,8 @@ class URLRequest(object):
             gotdata = self.gotdata, 
             gotlinks = self.gotlinks, 
             closed = self.closed,
-            linkdepth = self.linkdepth
+            linkdepth = self.linkdepth, 
+            parent_requestid = self.parent_requestid
         )
 
     @staticmethod
@@ -93,6 +95,7 @@ class URLRequest(object):
         item.closed = data.closed
         item.fetchts = data.submittedts
         item.expirets = data.expirets
+        item.parent_requestid = data.parent_requestid
         return item
     
 class URLRequestResult(object):

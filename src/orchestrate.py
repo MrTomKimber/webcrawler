@@ -110,15 +110,17 @@ def close_parental_request(session, request : URLRequest):
     parent_request_dataclass.closed=True
 
 
-def process_child_request_to_queue_and_close(session, config : Configuration, request : URLRequest, link : URLLinkConnection):
+def process_child_request_to_queue(session, config : Configuration, request : URLRequest, link : URLLinkConnection):
     parent_request_dataclass = request.to_dataclass()
     new_request = URLRequest.from_url(config, link.tourl)
     new_request.linkdepth = request.linkdepth + 1
+    new_request.parent_requestid = request.id
     if new_request.context is not None:
         session.add(new_request.to_dataclass())
-    parent_request_dataclass.closed=True
+    
 
-
+def setlist(values):
+    return list(set(values))
 
 def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
     
@@ -130,14 +132,37 @@ def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
         # Deciding which of these to request depends on whether they've been fetched before - and whether or not there's any in the current
         # request pool.
 
-        pending_requests_identifiers = DB.sql_query("""
-                                                        select request.requestid from 
-                                                        url_request_queue request
-                                                        where 
-                                                        gotdata = True and 
-                                                        gotlinks = True and
-                                                        closed = False
-                                                        """)[0]
+        url_exclusion_set = set([v[0] for v in DB.sql_query("""SELECT res.url
+                    FROM url_request_result res
+                    JOIN url_request_queue que on res.requestid = que.requestid
+                    where 
+                    que.gotdata = true
+                    and res.fetchts < que.expirets
+                    """)[0]])
+        
+        request_candidates_df = DB.sql_to_dataframe("""SELECT link.tourl, que.requestid
+                                                        FROM url_link_connection link
+                                                        JOIN url_request_queue que on link.requestid=que.requestid
+                                                        WHERE
+                                                        que.closed=false AND
+                                                        que.gotdata=true AND
+                                                        que.gotlinks=true 
+                                                        """)
+        # Build an index on the list of candidate urls that excludes any that do not have a matching context defined in config
+        context_index = request_candidates_df['tourl'].apply(lambda x : config.resolve_context_from_url(x) is not None and x not in url_exclusion_set)
+        # Consolidate the list of remaining urls, and list any open requestids that act as parents
+        url_requestid_series = request_candidates_df[context_index].groupby("tourl")['requestid'].agg(setlist)
+        request_list = []
+        total_set = set(request_candidates_df['requestid'].values)
+        close_set = set()
+        request_set = set()
+        for url, requests in url_requestid_series.items():
+            f,*r = requests
+            request_list.append((url, f))
+            request_set.add(f)
+            
+        close_set = total_set - request_set
+
         
         [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueueData).where(wcdbadmin.URLRequestQueueData.gotdata!=True).order_by(wcdbadmin.URLRequestQueueData.submittedts)).fetchall()]
         batch_len = min(batchsize, len(pending_requests_identifiers))

@@ -57,11 +57,12 @@ class URLRequestQueueData(Base):
     baseurl: Mapped[str]
     context : Mapped[str]
     submittedts: Mapped[datetime.datetime]
-    expirets: Mapped[Optional[datetime.datetime]]= mapped_column(nullable=True)
+    expirets: Mapped[Optional[datetime.datetime]] = mapped_column(nullable=True)
     gotdata: Mapped[bool]
     gotlinks: Mapped[bool]
     closed: Mapped[bool]
     linkdepth: Mapped[int]
+    parent_requestid : Mapped[str] = mapped_column(nullable=True)
 
 class URLRequestResultData(Base):
     """Class for capturing the response from a URL request."""
