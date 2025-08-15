@@ -5,20 +5,21 @@
             "name": "BBC News",
             "headers": null,
             "baseurl": "https://www.bbc.co.uk/news",
-            "refresh": "90D", 
-            "timeout" : 5
+            "refresh": "90D",
+            "timeout": 5,
+            "crawldepth": 2
         },
-        
         {
             "name": "NPR",
             "headers": null,
             "baseurl": "https://www.npr.org/",
-            "refresh": "90D", 
-            "timeout" : 5
+            "refresh": "90D",
+            "timeout": 5,
+            "crawldepth": 2
         }
-    ], 
-    "server" : {
-        "dblocation" : "../db/store.sqlite",
-        "maxthreads" : 100
+    ],
+    "server": {
+        "dblocation": "../db/store.sqlite",
+        "maxthreads": 100
     }
 }

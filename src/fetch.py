@@ -5,25 +5,35 @@ import datetime
 import uuid
 from datetime import timedelta, datetime
 from functools import partial
-import bs4
+from bs4 import BeautifulSoup, SoupStrainer
+from urllib.parse import urlsplit, urlunsplit, urljoin
 
-import src.dbadmin as dbadmin
-from src.config import Configuration, baseurl, niceurl
+from src.config import Configuration, FrequencyString, baseurl, niceurl
+import src.dbadmin as wcdbadmin
+
+
 
 class URLRequest(object):
     """Class used for wrapping a url http request
     (normally a get) both for preparing the call but
     also for capturing the resulting response."""
 
-    def __init__(self, config, url, context):
+    def __init__(self, config, url, context, depth=None):
         self.id = uuid.uuid4().hex
         self.url = url
         self.context = config.get_context(context)
-        self.complete=False
+        self.gotdata=False
         self.requested = False
         self.fetchts = None
+        self.expirets = None
         self.status = None
         self.gotlinks = False
+        self.closed = False
+        if depth is None:
+            depth=0
+        self.linkdepth = depth
+        self.fetchts=datetime.now()
+        self.expirets=self.fetchts + FrequencyString.evaluate(self.context.refresh)
 
     @staticmethod
     def from_url(config, url):
@@ -39,7 +49,7 @@ class URLRequest(object):
                     self.url, 
                     headers=self.context.headers, 
                     timeout=3)
-        fetchts=datetime.now()
+        
         content_type=None
         for k,v in _result.headers.items():
             if k.lower()=='content-type':
@@ -49,34 +59,40 @@ class URLRequest(object):
                 requestid =self.id,
                 url = self.url, 
                 baseurl = self.context.baseurl,
-                status = _result.status_code,
+                status = str(_result.status_code),
                 content = _result.content,
                 content_type = content_type, 
                 encoding = _result.encoding, 
-                fetchts = fetchts
+                fetchts = datetime.now()
                 )
 
-        self.complete=True
+        self.gotdata=True
         return result
 
     def to_dataclass(self):
-        return dbadmin.URLRequestQueue(
+        return wcdbadmin.URLRequestQueueData(
             requestid = self.id,
             url = self.url,
             #baseurl = baseurl(self.url),
             baseurl = self.context.baseurl,
             context = self.context.name,
-            submittedts = datetime.now(),
-            complete = self.complete, 
-            gotlinks = self.gotlinks
+            submittedts = self.fetchts,
+            expirets = self.expirets,
+            gotdata = self.gotdata, 
+            gotlinks = self.gotlinks, 
+            closed = self.closed,
+            linkdepth = self.linkdepth
         )
 
     @staticmethod
-    def from_dataclass(config, data : dbadmin.URLRequestQueue):
-        item = URLRequest(config, data.url, data.context) 
+    def from_dataclass(config, data : wcdbadmin.URLRequestQueueData):
+        item = URLRequest(config, data.url, data.context, data.linkdepth) 
         item.id = data.requestid
-        item.complete = data.complete
+        item.gotdata = data.gotdata
         item.gotlinks = data.gotlinks
+        item.closed = data.closed
+        item.fetchts = data.submittedts
+        item.expirets = data.expirets
         return item
     
 class URLRequestResult(object):
@@ -85,7 +101,7 @@ class URLRequestResult(object):
                 url : str, 
                 baseurl : str,
                 status : str,
-                content : str,
+                content : bytes,
                 content_type : str, 
                 encoding :str, 
                 fetchts 
@@ -115,27 +131,67 @@ class URLRequestResult(object):
     def collate_encoding_clues(self):
         """Encoding clues can be spread across multiple locations
         this function aims to collate all possible encoding cues
-        into a single place"""
-        encoding_clues = dict()
-        encoding_clues['header']=self.encoding
+        into a single place. The clues that are closest to the 
+        document in question are presented first, as these *should*
+        be more reliable indicators of the appropriate encoding to
+        use."""
+        
+        encoding_clues = list()
+        encoding_clues.append("{source}={value}".format(source="header", value=self.encoding))
         if self.content_type is not None:
             ctype, *others = self.content_type.split(";")
             for other in others:
                 parm, value = other.lower().split("=")
                 if parm.lower()=="charset":
-                    encoding_clues['mimetype']=value.lower()
+#                    encoding_clues['mimetype']=value.lower()
+                    encoding_clues.append("{source}={value}".format(source="mimetype", value=value.lower()))
         
         if self.classify_content()=='html':
-            meta_charset_strainer = bs4.SoupStrainer("meta", {'charset':True})
+            meta_charset_strainer = SoupStrainer("meta", {'charset':True})
             # Sift the first 500 bytes for any meta-tags that might be useful
-            nodes = bs4.BeautifulSoup(self.content[0:500].decode("utf-8"), features="html.parser", parse_only=meta_charset_strainer)
+            nodes = BeautifulSoup(self.content[0:500].decode("utf-8"), features="html.parser", parse_only=meta_charset_strainer)
             if len(nodes)>0:
-                encoding_clues['meta-charset']=list(nodes.children)[0].attrs['charset'].lower()
-        return encoding_clues
+                value=list(nodes.children)[0].attrs['charset'].lower()
+                encoding_clues.append("{source}={value}".format(source="meta-charset", value=value))
+        return ";".join(encoding_clues[::-1])
+
+
+    def unpack_content(self):
+        """Convert raw bytes into an instance of the original object, attempting to preserve original encoding."""
+        # Try and use the first of any encoding_clues
+        encoding = self.collate_encoding_clues().split(";")[0].lower().split("=")[1]
+        return self.content.decode(encoding=encoding)
+    
+
+    def url_link_connections_from_result(self):
+        html = self.unpack_content()
+        requestid=self.requestid
+        url=self.url
+        # Generate a set of raw links
+        raw_link_set = URLRequestResult.extract_links_from_html(html, url)
+        # Create list of link_objects
+        link_objects = []
+        for fullurl in raw_link_set:
+            link_objects.append(URLLinkConnection(url, fullurl, requestid))
+        return link_objects
+
+    @staticmethod
+    def extract_links_from_html(html, url, remove_anchors=True):
+        link_strainer = SoupStrainer("a")
+        linkset=set()
+        for link in BeautifulSoup(html, features="html.parser", parse_only=link_strainer):
+            if 'href' in link.attrs :
+                fullurl = urljoin(url, link['href'])
+                # Sometimes urls will contain anchors, which aren't always useful 
+                # so we optionally remove any anchor-links at this point
+                if remove_anchors:
+                    fullurl = urlunsplit(urlsplit(fullurl)._replace(fragment=""))
+                linkset.add(fullurl)
+        return linkset
 
 
     def to_dataclass(self):
-        return dbadmin.URLRequestResultData(
+        return wcdbadmin.URLRequestResultData(
             requestid = self.requestid,
             url = self.url, 
             baseurl = self.baseurl, 
@@ -144,10 +200,12 @@ class URLRequestResult(object):
             content_type = self.content_type, 
             content_length = self.content_length, 
             content_bytes = self.content, 
-            content_encoding = self.encoding
+            content_encoding = self.encoding, 
+            meta_class=self.classify_content(),
+            meta_encoding=self.collate_encoding_clues()
         )
     @staticmethod
-    def from_dataclass(data : dbadmin.URLRequestResultData):
+    def from_dataclass(data : wcdbadmin.URLRequestResultData):
         return URLRequestResult(
             requestid=data.requestid,
             url = data.url, 
@@ -159,3 +217,39 @@ class URLRequestResult(object):
             fetchts = data.fetchts
             )
 
+
+
+
+
+class URLLinkConnection(object):
+    def __init__(self, from_url, to_url, requestid):
+        self.linkid = uuid.uuid4().hex
+        self.requestid = requestid
+        self.fromurl = from_url
+        self.tourl = to_url
+
+    def linkclass(self):
+        classoptions = { "local", "self-referring-anchor", "self-referring", "external" }
+        from_comps = urlsplit(self.fromurl)
+        to_comps = urlsplit(self.tourl)
+        if (from_comps.netloc == to_comps.netloc) and ((from_comps.path != to_comps.path) or (from_comps.query != to_comps.query)):
+            return "local"
+        elif (from_comps.netloc == to_comps.netloc) and (from_comps.path == to_comps.path) and (from_comps.query == to_comps.query) and (self.fromurl != self.tourl):
+            # Intra-page links that repoint to different anchors within the same page
+            return "self-referring-anchor"
+        elif (self.fromurl == self.tourl):
+            # Links that point to themselves entirely
+            return "self-referring"
+        elif (from_comps.netloc != to_comps.netloc):
+            # Extra-site links that point elsewhere
+            return "external"
+
+    def to_dataclass(self):
+        return wcdbadmin.URLLinkConnectionData(
+            linkid = self.linkid,
+            requestid = self.requestid,
+            fromurl = self.fromurl ,
+            tourl = self.tourl
+        )
+
+    

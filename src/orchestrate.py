@@ -1,7 +1,7 @@
 
 from src.config import Configuration
-from src.fetch import URLRequest
-from src.extractlinks import URLLinkConnection
+from src.fetch import URLRequest, URLRequestResult, URLLinkConnection
+
 import src.dbadmin as wcdbadmin
 import src.extractlinks as wcextractlinks
 from sqlalchemy.orm import Session
@@ -31,21 +31,17 @@ def process_request_within_session(config, session, request_data):
 
     working_object = URLRequest.from_dataclass(config, request_data)
     result = working_object.get()
-    request_data.complete=True
+    request_data.gotdata=True
     session.add(request_data)
     dataclass_result = result.to_dataclass()
     session.add(dataclass_result)
 
-def process_result_within_session(session, result_data):
-    link_objects = [o.to_dataclass() for o in wcextractlinks.url_link_connections_from_result(result_data)]
-    session.bulk_save_objects(link_objects)
 
-
-def TriggerFetchProcess(config, DB, batchsize=50, threadpoolsize=5):
+def FetchProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
     # Pull incomplete requests in priority order
     with Session(DB.engine) as session:
-        #pending_requests_data = session.execute(sqltext("select * from url_request_queue where complete != true order by submittedts"))
-        pending_requests_objects = [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueue).where(wcdbadmin.URLRequestQueue.complete!=True).order_by(wcdbadmin.URLRequestQueue.submittedts)).fetchall()]
+        #pending_requests_data = session.execute(sqltext("select * from url_request_queue where gotdata != true order by submittedts"))
+        pending_requests_objects = [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueueData).where(wcdbadmin.URLRequestQueueData.gotdata!=True).order_by(wcdbadmin.URLRequestQueueData.submittedts)).fetchall()]
         batch_len = min(batchsize, len(pending_requests_objects))
         i=-1
         print(batch_len)
@@ -67,29 +63,120 @@ def TriggerFetchProcess(config, DB, batchsize=50, threadpoolsize=5):
     return f"Processed {i+1} records."
 
 
-def save_results_stub():
-    # Save the results to the database
-    with Session(DB.engine) as session:
-        # Run the data-fetch from the request - note this is within the session
-        result = url_request.get()
-        obj = result.to_dataclass()
-        session.add(obj)
-        session.commit()
+def process_links_from_result_within_session(session, result_data):
+    working_object = URLRequestResult.from_dataclass(result_data)
+    if working_object.classify_content() == "html":
+        link_objects = [l.to_dataclass() for l in working_object.url_link_connections_from_result()]
+        for linkdata in link_objects:
+            session.add(linkdata)
 
-def other_content_stub():
+def LinkProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
     
-
-    # Read Config
-    config = Configuration("../config/config.json")
-
-    # Setup Database
-    DB = dbadmin.DataStore(config)
-
-    # Create Request
-    url_request = URLRequest.from_url(config, "https://www.bbc.co.uk/news/articles/c23p028p200o")
-
-    # Save request to database
     with Session(DB.engine) as session:
-        obj = url_request.to_dataclass()
-        session.add(obj)
+        
+        pending_requests_identifiers = DB.sql_query("""
+                                                        select request.requestid from 
+                                                        url_request_queue request
+                                                        where 
+                                                        gotdata = True and 
+                                                        gotlinks = False and
+                                                        closed = False
+                                                        """)[0]
+        
+        [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueueData).where(wcdbadmin.URLRequestQueueData.gotdata!=True).order_by(wcdbadmin.URLRequestQueueData.submittedts)).fetchall()]
+        batch_len = min(batchsize, len(pending_requests_identifiers))
+        i=-1
+        while i < (batch_len-1):
+            threadpool=list()    
+            for t in range(0, min(threadpoolsize, (batch_len-i)-1)):
+                i=i+1
+                requestid = pending_requests_identifiers[i][0]
+                print(requestid)
+                working_result_dataclass = session.get(wcdbadmin.URLRequestResultData, requestid)
+                working_queue_dataclass = session.get(wcdbadmin.URLRequestQueueData, requestid)
+                threadpool.append(threading.Thread(target=process_links_from_result_within_session, args=(session, working_result_dataclass)))
+                working_queue_dataclass.gotlinks=True
+            for t in threadpool:
+                t.start()
+            for t in threadpool:
+                t.join()
+            del threadpool
+
         session.commit()
+    return f"Processed {i+1} records."
+
+def close_parental_request(session, request : URLRequest):
+    parent_request_dataclass = request.to_dataclass()
+    parent_request_dataclass.closed=True
+
+
+def process_child_request_to_queue_and_close(session, config : Configuration, request : URLRequest, link : URLLinkConnection):
+    parent_request_dataclass = request.to_dataclass()
+    new_request = URLRequest.from_url(config, link.tourl)
+    new_request.linkdepth = request.linkdepth + 1
+    if new_request.context is not None:
+        session.add(new_request.to_dataclass())
+    parent_request_dataclass.closed=True
+
+
+
+def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
+    
+    with Session(DB.engine) as session:
+        
+        # Start with a collection of requests that have been fetched - this is the collection of requests that want closing off as complete
+        # But to do so requires deciding whether to trigger any new requests off the back of the links found in these ones
+        # For each request, there may be a number of underlying links to follow. 
+        # Deciding which of these to request depends on whether they've been fetched before - and whether or not there's any in the current
+        # request pool.
+
+        pending_requests_identifiers = DB.sql_query("""
+                                                        select request.requestid from 
+                                                        url_request_queue request
+                                                        where 
+                                                        gotdata = True and 
+                                                        gotlinks = True and
+                                                        closed = False
+                                                        """)[0]
+        
+        [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueueData).where(wcdbadmin.URLRequestQueueData.gotdata!=True).order_by(wcdbadmin.URLRequestQueueData.submittedts)).fetchall()]
+        batch_len = min(batchsize, len(pending_requests_identifiers))
+        i=-1
+        while i < (batch_len-1):
+            threadpool=list()    
+            for t in range(0, min(threadpoolsize, (batch_len-i)-1)):
+                i=i+1
+                requestid = pending_requests_identifiers[i][0]
+                print(requestid)
+                working_result_dataclass = session.get(wcdbadmin.URLRequestResultData, requestid)
+                working_queue_dataclass = session.get(wcdbadmin.URLRequestQueueData, requestid)
+                threadpool.append(threading.Thread(target=process_links_from_result_within_session, args=(session, working_result_dataclass)))
+                working_queue_dataclass.gotlinks=True
+            for t in threadpool:
+                t.start()
+            for t in threadpool:
+                t.join()
+            del threadpool
+
+        session.commit()
+    return f"Processed {i+1} records."
+
+
+def ProcessURLRequestQueue(config, DB, batchsize=100, threadpoolsize=30):
+    def get_pending_q_length(DB):
+        return DB.sql_query("select count(*) as pending from url_request_queue where gotdata=false and closed=false")[0][0][0]
+    queue_length = get_pending_q_length(DB)
+    while queue_length > 0:
+        FetchProcessWorker(config, DB, batchsize=batchsize, threadpoolsize=threadpoolsize)
+        queue_length = get_pending_q_length(DB)
+
+def ProcessPendingExtractLinks(config, DB, batchsize=100, threadpoolsize=30):
+    def get_pending_count(DB):
+        return DB.sql_query("""select count(*) as pending from 
+                            url_request_queue request
+                            where gotdata = True and gotlinks = False and closed = False""")[0][0][0]
+    queue_length = get_pending_count(DB)
+    while queue_length > 0:
+        LinkProcessWorker(config, DB, batchsize=batchsize, threadpoolsize=threadpoolsize)
+        queue_length = get_pending_count(DB)
+    

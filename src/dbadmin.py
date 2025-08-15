@@ -3,6 +3,7 @@
 import sqlite3
 import os, sys
 from sqlalchemy.orm import DeclarativeBase
+from typing import Optional
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
@@ -23,6 +24,15 @@ class DataStore(object):
         self.engine = create_engine(f"sqlite:///{self.dblocation}", echo=True)
         Base.metadata.create_all(self.engine)
 
+    def sql_query(self, query):
+        with sqlite3.connect(self.dblocation) as connection:
+            cursor = connection.cursor()
+            results = cursor.execute(query)
+            if results.description is not None:
+                columns = [c[0] for c in results.description]
+                resultlist = results.fetchall()
+            return resultlist, columns
+        
     def sql_to_dataframe(self, query):
         with sqlite3.connect(self.dblocation) as connection:
             cursor = connection.cursor()
@@ -39,7 +49,7 @@ class DataStore(object):
 class Base(DeclarativeBase):
     pass
 
-class URLRequestQueue(Base):
+class URLRequestQueueData(Base):
     """Class for submitting a URL request."""#
     __tablename__ = "url_request_queue"
     requestid : Mapped[str] = mapped_column(primary_key=True)
@@ -47,8 +57,11 @@ class URLRequestQueue(Base):
     baseurl: Mapped[str]
     context : Mapped[str]
     submittedts: Mapped[datetime.datetime]
-    complete: Mapped[bool]
+    expirets: Mapped[Optional[datetime.datetime]]= mapped_column(nullable=True)
+    gotdata: Mapped[bool]
     gotlinks: Mapped[bool]
+    closed: Mapped[bool]
+    linkdepth: Mapped[int]
 
 class URLRequestResultData(Base):
     """Class for capturing the response from a URL request."""
@@ -62,16 +75,14 @@ class URLRequestResultData(Base):
     content_length : Mapped[int]
     content_bytes : Mapped[bytes]
     content_encoding : Mapped[str]
+    meta_class : Mapped[str]
+    meta_encoding : Mapped[str]
 
 class URLLinkConnectionData(Base):
     """Class for capturing link structure"""
     __tablename__ = "url_link_connection"
     linkid : Mapped[str] = mapped_column(primary_key=True)
     requestid : Mapped[str]
-    frombase: Mapped[str]
     fromurl: Mapped[str]
     tourl: Mapped[str]
-    fetchts: Mapped[datetime.datetime]
-    fetchcontext: Mapped[str]
-
 

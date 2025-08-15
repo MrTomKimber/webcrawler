@@ -53,6 +53,10 @@
                 "timeout" : {
                     "type" : "integer", 
                     "description" : "(Optional) number of seconds to await a response before timing out."
+                }, 
+                "crawldepth" : {
+                    "type" : "integer", 
+                    "description" : "(Optional) maximum depth of recursion when following links."
                 }
             },
             "additionalProperties": false,

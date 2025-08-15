@@ -158,12 +158,13 @@ class RequestContext(object):
     normally, these would include authentication and any
     other contextual information that would normally be
     scoped by the domain being accessed"""
-    def __init__(self, name, baseurl, headers, refresh, timeout=None):
+    def __init__(self, name, baseurl, headers, refresh, timeout=None, crawldepth=None):
         self.name = name
         self.baseurl = baseurl
         self.headers = headers
         self.refresh = refresh
         self.timeout = timeout
+        self.crawldepth = crawldepth
     
     @staticmethod
     def from_context_string(config : Configuration, context: str):
