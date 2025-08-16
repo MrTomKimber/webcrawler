@@ -34,7 +34,8 @@ class URLRequest(object):
             depth=0
         self.linkdepth = depth
         self.fetchts=datetime.now()
-        self.expirets=self.fetchts + FrequencyString.evaluate(self.context.refresh)
+        if self.context is not None:
+            self.expirets=self.fetchts + FrequencyString.evaluate(self.context.refresh)
 
     @staticmethod
     def from_url(config, url):

@@ -10,6 +10,52 @@ from sqlalchemy import select, text
 import threading
 import queue
 
+import logging
+
+class WebCrawler(object):
+    def __init__(self, config : str):
+        self.config=Configuration(config)
+
+        logging.basicConfig(format='%(levelname)s:%(message)s')
+        self.logger = logging.getLogger('sqlalchemy')
+        self.logger.setLevel(logging.ERROR)
+        self.logger.propagate = False
+        # Ensure logfile is truncated for demonstration
+        logfile = 'actions.log'
+        handler = logging.FileHandler(logfile, mode='w')
+        self.logger.setLevel(logging.INFO)
+
+        self.logger.handlers = []
+
+        handler.setLevel(logging.INFO)
+        self.logger.addHandler(handler)
+
+        # Suppress output from child loggers
+        logging.getLogger('sqlalchemy.engine').handlers = []
+        logging.getLogger('sqlalchemy.pool').handlers = []
+        logging.getLogger('sqlalchemy.orm').handlers = []
+
+        self.database=wcdbadmin.DataStore(self.config)
+        
+    def _submit_url_to_queue(self, url):
+        url_request = URLRequest.from_url(self.config, url)
+        if url_request.context is None:
+            self.logger.info(f"No matching context found for {url} review your config file.")
+        else:
+            with Session(self.database.engine) as session:
+                obj = url_request.to_dataclass()
+                session.add(obj)
+                session.commit()
+            self.logger.info(f"Added {url} to queue - requestid: {url_request.id}")
+
+    def _work_on_request_queue(self):
+        FetchProcessWorker(self.config, self.database,batchsize=50, threadpoolsize=5)
+
+    def _work_on_result_list(self):
+        LinkProcessWorker(self.config, self.database, batchsize=50, threadpoolsize=5)
+    
+    def _work_on_pending_links(self):
+        QueueProcessWorker(self.config, self.database, batchsize=50, threadpoolsize=5)
 
 def submit_url_to_queue(config, datastore, url):
     url_request = URLRequest.from_url(config, url)

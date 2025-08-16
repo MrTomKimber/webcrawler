@@ -21,7 +21,7 @@ class DataStore(object):
             new_db_start = True
         else:
             new_db_start = False
-        self.engine = create_engine(f"sqlite:///{self.dblocation}", echo=True)
+        self.engine = create_engine(f"sqlite:///{self.dblocation}", echo=False)
         Base.metadata.create_all(self.engine)
 
     def sql_query(self, query):
