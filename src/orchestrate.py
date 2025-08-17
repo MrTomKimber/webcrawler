@@ -50,15 +50,24 @@ class WebCrawler(object):
 
     def _work_on_request_queue(self):
         """Look for outstanding items on the request queue and process them"""
-        return FetchProcessWorker(self.config, self.database,batchsize=1000, threadpoolsize=5)
+        remaining = -1
+        while remaining != 0:
+            remaining = FetchProcessWorker(self.config, self.database,batchsize=1000, threadpoolsize=5)
+        return remaining
 
     def _work_on_result_list(self):
         """From the completed requests, extract links"""
-        return LinkProcessWorker(self.config, self.database, batchsize=1000, threadpoolsize=5)
+        remaining = -1
+        while remaining != 0:
+            remaining = LinkProcessWorker(self.config, self.database, batchsize=1000, threadpoolsize=5)
+        return remaining 
     
     def _work_on_pending_links(self):
         """From the pool of unfetched links, identify new requests and add to the request queue"""
-        return QueueProcessWorker(self.config, self.database, batchsize=50, threadpoolsize=5)
+        remaining = -1
+        while remaining != 0:
+            remaining = QueueProcessWorker(self.config, self.database, batchsize=50, threadpoolsize=5)
+        return remaining
 
     
 
@@ -210,8 +219,27 @@ def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
                                                         WHERE
                                                         que.closed=false AND
                                                         que.gotdata=true AND
-                                                        que.gotlinks=true 
+                                                        que.gotlinks=true AND
+                                                        que.linkdepth < que.maxdepth
                                                         """)
+        
+
+        expired_candidates_df = DB.sql_to_dataframe("""SELECT que.requestid, que.submittedts
+                                                        FROM url_link_connection link
+                                                        JOIN url_request_queue que on link.requestid=que.requestid
+                                                        WHERE
+                                                        que.closed=false AND
+                                                        que.gotdata=true AND
+                                                        que.gotlinks=true AND
+                                                        que.linkdepth = que.maxdepth
+                                                        """)
+
+
+
+
+
+        expired_candidates_set = set(expired_candidates_df['requestid'].values)
+
         # Build an index on the list of candidate urls that excludes any that do not have a matching context defined in config
         context_index = request_candidates_df['tourl'].apply(lambda x : config.resolve_context_from_url(x) is not None and x not in url_exclusion_set)
 
@@ -221,7 +249,7 @@ def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
         # Consolidate the list of remaining urls, and list any open requestids that act as parents
         url_requestid_series = request_candidates_df[context_index].groupby("tourl")['requestid'].agg(setlist)
         request_list = []
-        total_set = set(request_candidates_df['requestid'].values)
+        total_set = set(request_candidates_df['requestid'].values).union(expired_candidates_set)
         close_set = set()
         request_set = set()
         for url, requests in url_requestid_series.items():

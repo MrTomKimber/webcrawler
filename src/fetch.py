@@ -36,6 +36,7 @@ class URLRequest(object):
         self.fetchts=datetime.now()
         if self.context is not None:
             self.expirets=self.fetchts + FrequencyString.evaluate(self.context.refresh)
+            self.maxdepth = self.context.crawldepth
 
     @staticmethod
     def from_url(config, url):
@@ -84,6 +85,7 @@ class URLRequest(object):
             gotlinks = self.gotlinks, 
             closed = self.closed,
             linkdepth = self.linkdepth, 
+            maxdepth = self.maxdepth,
             parent_requestid = self.parent_requestid
         )
 
@@ -97,6 +99,8 @@ class URLRequest(object):
         item.fetchts = data.submittedts
         item.expirets = data.expirets
         item.parent_requestid = data.parent_requestid
+        item.linkdepth = data.linkdepth
+        item.maxdepth = data.linkdepth
         return item
     
 class URLRequestResult(object):

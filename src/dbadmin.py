@@ -62,6 +62,7 @@ class URLRequestQueueData(Base):
     gotlinks: Mapped[bool]
     closed: Mapped[bool]
     linkdepth: Mapped[int]
+    maxdepth: Mapped[int]
     parent_requestid : Mapped[str] = mapped_column(nullable=True)
 
 class URLRequestResultData(Base):
