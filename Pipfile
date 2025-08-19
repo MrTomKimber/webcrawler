@@ -12,6 +12,7 @@ beautifulsoup4 = "*"
 jsonschema = "*"
 sqlalchemy = "*"
 importlib-resources = "*"
+tqdm = "*"
 
 [dev-packages]
 

@@ -57,6 +57,14 @@
                 "crawldepth" : {
                     "type" : "integer", 
                     "description" : "(Optional) maximum depth of recursion when following links."
+                }, 
+                "donotfollow" : {
+                    "type" : "array",
+                    "description" : "(Optional) list of partial string-phrases which if matched against a url, will be used to block that url from being further traversed", 
+                    "items" : {
+                        "type" : "string"
+                    }
+
                 }
             },
             "additionalProperties": false,

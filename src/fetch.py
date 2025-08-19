@@ -10,7 +10,14 @@ from urllib.parse import urlsplit, urlunsplit, urljoin
 
 from src.config import Configuration, FrequencyString, baseurl, niceurl
 import src.dbadmin as wcdbadmin
+from time import sleep
 
+def niceurl(url):
+    split_url = urlsplit(url)
+    nice_url = urlunsplit(split_url)
+    if nice_url[-1]=="/":
+        nice_url=nice_url[:-1]
+    return nice_url
 
 
 class URLRequest(object):
@@ -46,13 +53,21 @@ class URLRequest(object):
         context = config.resolve_context_from_url(url)
         return URLRequest(config, url, context)
 
+    @staticmethod
+    def do_not_follow(config, url):
+        context_str = config.resolve_context_from_url(url)
+        if context_str is not None:
+            context_obj = config.get_context(context_str)
+            donotfollow_regex=re.compile("|".join(set([re.escape(s) for s in context_obj.donotfollow])))
+            return bool(donotfollow_regex.search(url))
+        return False
 
     def get(self):
         _result = requests.get(
                     self.url, 
                     headers=self.context.headers, 
                     timeout=3)
-        
+        sleep(0.01)
         content_type=None
         for k,v in _result.headers.items():
             if k.lower()=='content-type':
@@ -124,6 +139,7 @@ class URLRequestResult(object):
         self.encoding = encoding
         self.fetchts = fetchts
 
+
     def classify_content(self):
         # Extendable function to identify and classify known
         # content-classes. 
@@ -193,7 +209,7 @@ class URLRequestResult(object):
                 # Sometimes urls will contain anchors, which aren't always useful 
                 # so we optionally remove any anchor-links at this point
                 if remove_anchors:
-                    fullurl = urlunsplit(urlsplit(fullurl)._replace(fragment=""))
+                    fullurl = niceurl(urlunsplit(urlsplit(fullurl)._replace(fragment="")))
                 linkset.add(fullurl)
         return linkset
 
@@ -235,6 +251,8 @@ class URLLinkConnection(object):
         self.requestid = requestid
         self.fromurl = from_url
         self.tourl = to_url
+        self.followed = False
+        self.donotfollow = False
 
     def linkclass(self):
         classoptions = { "local", "self-referring-anchor", "self-referring", "external" }
@@ -257,7 +275,17 @@ class URLLinkConnection(object):
             linkid = self.linkid,
             requestid = self.requestid,
             fromurl = self.fromurl ,
-            tourl = self.tourl
+            tourl = self.tourl, 
+            followed = self.followed,
+            donotfollow = self.donotfollow
         )
 
-    
+    def from_dataclass(self, data : wcdbadmin.URLLinkConnectionData):
+        stub = URLRequestResult(
+            from_url = data.fromurl, 
+            to_url = data.tourl, 
+            requestid=data.requestid
+        )
+        stub.followed = data.followed
+        stub.donotfollow = data.donotfollow
+        return stub

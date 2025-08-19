@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 import datetime
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Index
 import pandas as pd
 
 class DataStore(object):
@@ -21,7 +21,7 @@ class DataStore(object):
             new_db_start = True
         else:
             new_db_start = False
-        self.engine = create_engine(f"sqlite:///{self.dblocation}", echo=False)
+        self.engine = create_engine(f"sqlite:///{self.dblocation}", echo=False, pool_size=20)
         Base.metadata.create_all(self.engine)
 
     def sql_query(self, query):
@@ -31,7 +31,8 @@ class DataStore(object):
             if results.description is not None:
                 columns = [c[0] for c in results.description]
                 resultlist = results.fetchall()
-            return resultlist, columns
+                return resultlist, columns
+            return results
         
     def sql_to_dataframe(self, query):
         with sqlite3.connect(self.dblocation) as connection:
@@ -52,6 +53,7 @@ class Base(DeclarativeBase):
 class URLRequestQueueData(Base):
     """Class for submitting a URL request."""#
     __tablename__ = "url_request_queue"
+    __table_args__ = (Index('url_request_queue_url_ix', "url"), )
     requestid : Mapped[str] = mapped_column(primary_key=True)
     url : Mapped[str]
     baseurl: Mapped[str]
@@ -68,6 +70,7 @@ class URLRequestQueueData(Base):
 class URLRequestResultData(Base):
     """Class for capturing the response from a URL request."""
     __tablename__ = "url_request_result"
+    __table_args__ = (Index('url_request_result_url_ix', "url"), )
     requestid : Mapped[str] = mapped_column(primary_key=True)
     url : Mapped[str]
     baseurl: Mapped[str]
@@ -76,15 +79,19 @@ class URLRequestResultData(Base):
     content_type : Mapped[str]
     content_length : Mapped[int]
     content_bytes : Mapped[bytes]
-    content_encoding : Mapped[str]
-    meta_class : Mapped[str]
-    meta_encoding : Mapped[str]
+    content_encoding : Mapped[str] = mapped_column(nullable=True)
+    meta_class : Mapped[str] = mapped_column(nullable=True)
+    meta_encoding : Mapped[str] = mapped_column(nullable=True)
 
 class URLLinkConnectionData(Base):
     """Class for capturing link structure"""
     __tablename__ = "url_link_connection"
+    __table_args__ = (Index('url_link_connection_url_ix', "tourl"), )
     linkid : Mapped[str] = mapped_column(primary_key=True)
     requestid : Mapped[str]
     fromurl: Mapped[str]
     tourl: Mapped[str]
+    followed : Mapped[bool]
+    donotfollow: Mapped[bool]
+
 

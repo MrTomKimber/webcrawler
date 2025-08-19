@@ -9,6 +9,10 @@ from sqlalchemy import select, text
 
 import threading
 import queue
+from tqdm import tqdm
+from math import ceil
+
+import pandas as pd
 
 import logging
 
@@ -36,6 +40,128 @@ class WebCrawler(object):
         logging.getLogger('sqlalchemy.orm').handlers = []
 
         self.database=wcdbadmin.DataStore(self.config)
+
+        self.fetch_pending_requests_process = ThreadedDataProcess(self.config, 
+                                                                  self.database, 
+                                                                  100, 
+                                                                  5, 
+                                                                  """SELECT requestid, parent_requestid, linkdepth, maxdepth, url from url_request_queue where closed = false and gotdata = false""",
+                                                                  fetch_pending_request_function, 
+                                                                  )
+        
+        self.retrieve_links_from_data = ThreadedDataProcess(self.config, 
+                                                                  self.database, 
+                                                                  100, 
+                                                                  1, 
+                                                                  """SELECT que.requestid, 
+                                                                  que.parent_requestid, 
+                                                                  que.linkdepth, 
+                                                                  que.maxdepth, 
+                                                                  que.url, 
+                                                                  res.meta_class
+                                                                  FROM url_request_queue que 
+                                                                  JOIN url_request_result res
+                                                                  ON que.requestid = res.requestid
+                                                                  WHERE 
+                                                                    closed = false 
+                                                                AND gotdata = true 
+                                                                AND gotlinks = false
+                                                                """,
+                                                                  retrieve_links_function, 
+                                                                  )
+        
+        self.request_request_from_links = ThreadedDataProcess(self.config, 
+                                                                  self.database, 
+                                                                  100, 
+                                                                  1, 
+                                                                  """SELECT 
+                                                                        que.requestid, 
+                                                                        link.linkid,
+                                                                        link.tourl, 
+                                                                        COALESCE(url_c.url_count,0) as existing, 
+                                                                        que.linkdepth <= que.maxdepth as recurse,
+                                                                        que.linkdepth,
+                                                                        que.maxdepth, 
+                                                                        link.followed, 
+                                                                        link.donotfollow
+                                                                    FROM 
+                                                                        url_request_queue que 
+                                                                    LEFT JOIN 
+                                                                        url_link_connection link ON link.requestid = que.requestid 
+                                                                    LEFT JOIN 
+                                                                        url_request_result res ON link.requestid = res.requestid 
+                                                                    LEFT JOIN
+                                                                        (SELECT que.url url, count(*) url_count from url_request_queue que group by que.url) url_c on url_c.url = link.tourl
+                                                                        
+                                                                    WHERE 
+                                                                        que.closed = false 
+                                                                    AND que.gotlinks = true 
+                                                                    AND link.followed = false
+                                                                    AND COALESCE(url_c.url_count,0) = false""", 
+                                                                    generate_requests_function,
+                                                                    )
+        
+        self.close_exhausted_requests = ThreadedDataProcess(self.config, 
+                                                                  self.database, 
+                                                                  100, 
+                                                                  1, 
+                                                                  """SELECT  
+                                                                        que.requestid, 
+                                                                        count(link.linkid) as unfollowed_links
+
+                                                                    FROM 
+                                                                        url_request_queue que 
+                                                                    LEFT JOIN 
+                                                                        url_link_connection link ON link.requestid = que.requestid AND link.followed = false
+                                                                    WHERE 
+                                                                        que.closed = false 
+                                                                    AND 
+                                                                        que.gotlinks = true
+                                                                        
+                                                                    GROUP BY
+                                                                        que.requestid""", 
+                                                                    close_exhausted_requests_function,
+                                                                    )
+        self.close_duplicate_requests = ThreadedDataProcess(self.config, 
+                                                                  self.database, 
+                                                                  100, 
+                                                                  1, 
+                                                                  """SELECT
+                                                                        que.requestid, 
+                                                                        que.url, 
+                                                                        que.submittedts, 
+                                                                        que.linkdepth,
+                                                                        dups.number, 
+                                                                        RANK() OVER (PARTITION BY que.url ORDER BY que.linkdepth, submittedts)=1 as keep
+                                                                    FROM
+                                                                        (SELECT 
+                                                                            que.url, 
+                                                                            group_concat(que.requestid) ids, 
+                                                                            count(que.requestid) number, 
+                                                                            que.closed
+                                                                        FROM url_request_queue que 
+                                                                        WHERE
+                                                                            que.closed = false
+                                                                        GROUP BY 
+                                                                            que.url, que.closed
+                                                                        HAVING COUNT(que.url) > 1) as dups 
+                                                                    JOIN 
+                                                                        url_request_queue que ON dups.url = que.url
+                                                                    WHERE 
+                                                                        que.closed = false
+                                                                    ORDER BY
+                                                                        que.url, que.linkdepth, que.submittedts""", 
+                                                                    close_duplicate_requests_function,
+                                                                    )
+
+
+    def perform_cycle(self):
+        self.fetch_pending_requests_process.autorun()
+        self.retrieve_links_from_data.autorun()
+        self.request_request_from_links.autorun()
+        self.close_exhausted_requests.autorun()
+        self.close_duplicate_requests.autorun()
+
         
     def _submit_url_to_queue(self, url):
         url_request = URLRequest.from_url(self.config, url)
@@ -47,6 +173,7 @@ class WebCrawler(object):
                 session.add(obj)
                 session.commit()
             self.logger.info(f"Added {url} to queue - requestid: {url_request.id}")
+
 
     def _work_on_request_queue(self):
         """Look for outstanding items on the request queue and process them"""
@@ -70,6 +197,152 @@ class WebCrawler(object):
         return remaining
 
     
+    
+class ThreadedDataProcess(object):
+    def __init__(self, config, datastore, batchsize, poolsize, pollsql, datafunction):
+        self.config = config
+        self.datafunction = datafunction
+        self.batchsize = batchsize
+        self.poolsize = poolsize
+        self.pollsql = pollsql
+        self.datastore = datastore
+
+    def poll(self):
+        poll_df = self.datastore.sql_to_dataframe(self.pollsql)
+        return poll_df
+
+    def execute(self, data):
+        tasksize = len(data)
+
+        arguments = self.config, self.datastore
+        batchcount = ceil(tasksize/self.batchsize)
+        for b in range(batchcount):
+            for d in tqdm(range(b*self.batchsize, min((b+1)*self.batchsize, tasksize), self.poolsize)):
+                threadpool=[]
+                for t in range(d, min(d+self.poolsize, (b+1)*self.batchsize,tasksize)):
+                    threadpool.append(threading.Thread(target=self.datafunction, args=(data[t], *arguments)))
+                for t in threadpool:
+                    t.start()
+                for t in threadpool:
+                    t.join()
+                for t in threadpool:
+                    del t
+                del threadpool
+            # Perform commits at completion of task (batch-intervals only used to break-up thread-operations
+
+    def autorun(self):
+        data = [r for i,r in self.poll().iterrows()]
+        self.execute(data)
+
+
+
+def fetch_pending_request_function(poll_data, config, datastore):
+    """Reads dataclass data from a queue, converts it to the appropriate
+    object (must have a from_dataclass initiation method) and then runs
+    the objects get() method to create a result object, which is saved
+    to the output_queue. Finally, the original object (with any mutations)
+    is returned to the status_queue so those mutations can be written 
+    back to the database."""
+    with Session(datastore.engine) as session:
+        queue_data = session.get(wcdbadmin.URLRequestQueueData, poll_data.requestid)
+        queue_object = URLRequest.from_dataclass(config, queue_data)
+        result = queue_object.get()
+        dataclass_result = result.to_dataclass()
+        queue_data.gotdata=True
+        
+        session.add(dataclass_result)
+        session.commit()
+
+
+
+def retrieve_links_function(poll_data, config, datastore):
+    with Session(datastore.engine) as session:
+        queue_data = session.get(wcdbadmin.URLRequestQueueData, poll_data.requestid)
+        queue_object = URLRequest.from_dataclass(config, queue_data)
+        result_data = session.get(wcdbadmin.URLRequestResultData, poll_data.requestid)
+        result_object = URLRequestResult.from_dataclass(result_data)
+        if result_object.classify_content() == "html":
+            link_objects = [l.to_dataclass() for l in result_object.url_link_connections_from_result()]
+            for linkdata in link_objects:
+                linkdata.donotfollow = URLRequest.do_not_follow(config, linkdata.tourl)
+                session.add(linkdata)
+        
+        queue_data.gotlinks=True
+        session.commit()
+
+def generate_requests_function(poll_data, config, datastore):
+    with Session(datastore.engine) as session:
+        url = poll_data.tourl
+        new_request = URLRequest.from_url(config, url)
+        if new_request.context is not None and url is not None:
+            new_request.linkdepth = poll_data.linkdepth + 1
+            if poll_data.existing == False and poll_data.recurse == True and poll_data.donotfollow == False:
+                new_request.parent_requestid = poll_data.requestid
+                session.add(new_request.to_dataclass())
+
+        # Mark flag to show that the link has been evaluated
+        if poll_data.linkid is not None:
+            #print(poll_data.requestid, poll_data.linkid)
+            link_object = session.get(wcdbadmin.URLLinkConnectionData, poll_data.linkid)
+            if link_object is not None:
+                link_object.followed = True
+            else:
+                print(f"{poll_data.linkid} not identified as a valid link-object")
+        else:
+            print(f"{url} not followed for {poll_data.requestid}")
+        session.commit()
+
+def close_exhausted_requests_function(poll_data, config, datastore):
+    with Session(datastore.engine) as session:
+        queue_data = session.get(wcdbadmin.URLRequestQueueData, poll_data.requestid)
+        queue_object = URLRequest.from_dataclass(config, queue_data)
+        queue_data.closed = True
+        session.commit()
+
+def close_duplicate_requests_function(poll_data, config, datastore):
+    with Session(datastore.engine) as session:
+        if poll_data.keep == False:
+            queue_data = session.get(wcdbadmin.URLRequestQueueData, poll_data.requestid)
+            queue_data.closed = True
+            session.commit()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def submit_url_to_queue(config, datastore, url):
@@ -105,13 +378,13 @@ def FetchProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
         pending_requests_objects = [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueueData).where(wcdbadmin.URLRequestQueueData.gotdata!=True).order_by(wcdbadmin.URLRequestQueueData.submittedts)).fetchall()]
         batch_len = min(batchsize, len(pending_requests_objects))
         i=-1
-        print(batch_len)
+        #print(batch_len)
         while i < (batch_len-1):
             threadpool=list()    
-            print(i, batch_len, threadpoolsize)
+            #print(i, batch_len, threadpoolsize)
             for t in range(0, min(threadpoolsize, (batch_len-i)-1)):
                 i=i+1
-                print(i)
+                #print(i)
                 threadpool.append(threading.Thread(target=process_request_within_session, args=(config, session, pending_requests_objects[i])))
                 
             for t in threadpool:
@@ -147,14 +420,14 @@ def LinkProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
         
 #        [o[0] for o in session.execute(select(wcdbadmin.URLRequestQueueData).where(wcdbadmin.URLRequestQueueData.gotdata!=True).order_by(wcdbadmin.URLRequestQueueData.submittedts)).fetchall()]
         batch_len = min(batchsize, len(pending_requests_identifiers))
-        print(f"batchlen{batch_len}")
+        #print(f"batchlen{batch_len}")
         i=-1
         while i < (batch_len-1):
             threadpool=list()    
             for t in range(0, min(threadpoolsize, (batch_len-i)-1)):
                 i=i+1
                 requestid = pending_requests_identifiers[i][0]
-                print(requestid)
+                #print(requestid)
                 working_result_dataclass = session.get(wcdbadmin.URLRequestResultData, requestid)
                 working_queue_dataclass = session.get(wcdbadmin.URLRequestQueueData, requestid)
                 threadpool.append(threading.Thread(target=process_links_from_result_within_session, args=(session, working_result_dataclass)))
@@ -279,7 +552,7 @@ def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
             for t in threadpool:
                 t.join()
             del threadpool
-            print(i)
+            #print(i)
 
         for requestid in close_list:
             request = session.get(wcdbadmin.URLRequestQueueData, requestid)
@@ -288,23 +561,3 @@ def QueueProcessWorker(config, DB, batchsize=50, threadpoolsize=5):
         print(f"Processed {i+1} records.")
     return len(request_list)-(i+1)
 
-
-
-def ProcessURLRequestQueue(config, DB, batchsize=100, threadpoolsize=30):
-    def get_pending_q_length(DB):
-        return DB.sql_query("select count(*) as pending from url_request_queue where gotdata=false and closed=false")[0][0][0]
-    queue_length = get_pending_q_length(DB)
-    while queue_length > 0:
-        FetchProcessWorker(config, DB, batchsize=batchsize, threadpoolsize=threadpoolsize)
-        queue_length = get_pending_q_length(DB)
-
-def ProcessPendingExtractLinks(config, DB, batchsize=100, threadpoolsize=30):
-    def get_pending_count(DB):
-        return DB.sql_query("""select count(*) as pending from 
-                            url_request_queue request
-                            where gotdata = True and gotlinks = False and closed = False""")[0][0][0]
-    queue_length = get_pending_count(DB)
-    while queue_length > 0:
-        LinkProcessWorker(config, DB, batchsize=batchsize, threadpoolsize=threadpoolsize)
-        queue_length = get_pending_count(DB)
-    
